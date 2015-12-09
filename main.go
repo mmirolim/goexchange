@@ -19,9 +19,10 @@ type Currency struct {
 }
 
 type Job struct {
-	From        string
-	To          string
-	FailCounter int
+	From           string
+	To             string
+	FailCounter    int
+	SuccessCounter int
 }
 
 type ExchangeData struct {
@@ -68,50 +69,61 @@ func main() {
 }
 
 var (
-	getRateRetry               = 3
-	getRateDelay time.Duration = 3 * time.Second
+	limitOnFail       = 3
+	limitOnSuccess    = 10
+	delayOnGetRateErr = 3 * time.Second
+	delayOnSuccess    = 5 * time.Second
 )
 
 func worker(queue *beanstalk.Conn, tubeName string, out chan ExchangeData) {
-	var job Job
-	var rate float64
-	tube := beanstalk.Tube{queue, tubeName}
-	ts := beanstalk.NewTubeSet(queue, tubeName)
+	var (
+		id   uint64
+		job  Job
+		rate float64
+		err  error
+	)
+
+	jobTube := NewJobTube(queue, tubeName)
+	// start inf loop to process jobs
 	for {
-		id, data, err := ts.Reserve(time.Second)
+		// get and reserve job
+		id, job, err = jobTube.Reserve(time.Second)
 		if err != nil {
 			// TODO handle error
-			log.Println(err)
-			continue
-
-		}
-		err = json.Unmarshal(data, &job)
-		if err != nil {
-			log.Println(err)
+			log.Println("job tube reserve ", err)
 			continue
 		}
 
 		rate, err = parser.GetRate(source.XE_COM, job.From, job.To)
 		if err != nil {
-			log.Println("GetRate err ", err)
-			// put back job with a delay
+			log.Println("job id ", id, " GetRate err ", err)
 			// and increment fail counter
 			job.FailCounter++
-			data, err = json.Marshal(&job)
-			if err != nil {
-				log.Println("job marshal err ", err)
+			if job.FailCounter > limitOnFail {
+				// bury job
+				queue.Bury(id, 1)
+				// and go to beginning of the loop for new job
 				continue
 			}
-			id, err = tube.Put(data, 1, getRateDelay, time.Minute)
-			if err != nil {
-				log.Println("put job with delay err ", err)
-			}
-			log.Println("job failed put it back with delay ", getRateDelay)
+			// put back job with a delay
+			id, err = jobTube.PutBack(id, job, delayOnGetRateErr)
+			log.Println("job id ", id, "failed put it back with delay ", delayOnGetRateErr)
 			continue
 		}
 
-		// if sucess put job with 60s delay
-		queue.Delete(id)
+		// on sucess incr success counter
+		job.SuccessCounter++
+		// condition on success counter
+		if job.SuccessCounter == limitOnSuccess {
+			// delete currency conversion job
+			err = queue.Delete(id)
+			if err != nil {
+				log.Println("on delete ", err)
+			}
+			continue
+		}
+		// put job back with incr counter
+		id, err = jobTube.PutBack(id, job, delayOnSuccess)
 		// send result to chan
 		out <- ExchangeData{
 			Job:       job,
@@ -121,4 +133,49 @@ func worker(queue *beanstalk.Conn, tubeName string, out chan ExchangeData) {
 
 	}
 
+}
+
+type Tube struct {
+	q              *beanstalk.Conn
+	t              *beanstalk.Tube
+	ts             *beanstalk.TubeSet
+	delayOnSuccess time.Duration
+	delayOnErr     time.Duration
+}
+
+func NewJobTube(conn *beanstalk.Conn, tube string) *Tube {
+	return &Tube{
+		q:  conn,
+		t:  &beanstalk.Tube{conn, tube},
+		ts: beanstalk.NewTubeSet(conn, tube),
+	}
+}
+
+func (tb *Tube) Reserve(timeout time.Duration) (uint64, Job, error) {
+	var job Job
+	id, data, err := tb.ts.Reserve(timeout)
+	if err != nil {
+		return 0, job, err
+	}
+	err = json.Unmarshal(data, &job)
+	if err != nil {
+		return 0, job, err
+	}
+
+	return id, job, nil
+}
+
+func (tb *Tube) PutBack(id uint64, job Job, delay time.Duration) (uint64, error) {
+	data, err := json.Marshal(job)
+	if err != nil {
+		return 0, err
+	}
+
+	// swap jobs by deleting previous and putting new one
+	err = tb.q.Delete(id)
+	if err != nil {
+		return 0, err
+	}
+
+	return tb.t.Put(data, 1, delay, time.Minute)
 }
