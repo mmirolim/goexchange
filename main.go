@@ -78,7 +78,7 @@ var (
 	limitOnFail       = 3
 	limitOnSuccess    = 10
 	delayOnGetRateErr = 3 * time.Second
-	delayOnSuccess    = 5 * time.Second
+	delayOnSuccess    = 60 * time.Second
 )
 
 func worker(queue *beanstalk.Conn, tubeName string, db *datastore.DB, out chan ExchangeData) {
