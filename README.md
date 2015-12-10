@@ -48,5 +48,6 @@ go run job-producer.go -n 1 -f USD -t HKD
 ### TODO
 1. Add Makefile
 2. Add tests
+3. Connection description for beanstalk and mongo in main.go. Make it configurable.
 
 
