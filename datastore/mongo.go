@@ -6,6 +6,7 @@ import (
 	"gopkg.in/mgo.v2"
 )
 
+// DB wraps mongo db connection
 type DB struct {
 	db string       // db name
 	m  *mgo.Session // mongo active session

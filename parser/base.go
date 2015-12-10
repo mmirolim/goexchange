@@ -8,6 +8,7 @@ import (
 	"golang.org/x/net/html/atom"
 )
 
+// ExchangeSource defines source to use in parser
 type ExchangeSource interface {
 	ExchangePageUrl(from, to string) string
 	// returns node selector where data located
@@ -15,6 +16,7 @@ type ExchangeSource interface {
 	FormatRate(rate string) (float64, error)
 }
 
+// NodeSelector node description to find in dom tree
 type NodeSelector struct {
 	Tag  atom.Atom
 	Attr string
@@ -22,6 +24,8 @@ type NodeSelector struct {
 	Pos  int
 }
 
+// GetRate make http get request to requried page and parse it to find node
+// according to selector
 func GetRate(src ExchangeSource, from, to string) (float64, error) {
 	var rate float64
 	// get html page
@@ -31,7 +35,7 @@ func GetRate(src ExchangeSource, from, to string) (float64, error) {
 	}
 	// find core element to parse
 	defer r.Body.Close()
-
+	// generate dom tree
 	d, err := html.Parse(r.Body)
 	if err != nil {
 		return rate, err
@@ -50,6 +54,7 @@ func GetRate(src ExchangeSource, from, to string) (float64, error) {
 	return rate, nil
 }
 
+// get text from node
 func getText(n *html.Node) string {
 	var s string
 	// simplest will be
@@ -59,6 +64,7 @@ func getText(n *html.Node) string {
 	return s
 }
 
+// traverse dom tree recursively to find node by selector
 func findNodes(h *html.Node, s NodeSelector) []*html.Node {
 	nodes := make([]*html.Node, 0)
 	var f func(*html.Node)

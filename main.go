@@ -14,11 +14,7 @@ import (
 	"github.com/mmirolim/HsNlaEWBgkaYrFKu2BQHSQ/source"
 )
 
-type Currency struct {
-	Abbr string
-	Name string
-}
-
+// Job in beanstalkd
 type Job struct {
 	From           string
 	To             string
@@ -26,6 +22,8 @@ type Job struct {
 	SuccessCounter int `bson:"-"` // ignore in mongo
 }
 
+// ExchangeData is result for a job
+// TODO add source to job (where to get data)
 type ExchangeData struct {
 	Job
 	Rate      string // rate in string format with 2 decimal numbers
@@ -33,19 +31,31 @@ type ExchangeData struct {
 }
 
 const (
-	BEAN_ADDR  = "challenge.aftership.net:11300"
-	TUBE_NAME  = "mmirolim"
+	// beanstalk server addr
+	BEAN_ADDR = "challenge.aftership.net:11300"
+	// tube name in beanstalk
+	TUBE_NAME = "mmirolim"
+	// dsn
 	MONGO_HOST = "mongodb://admin:admin@ds027415.mongolab.com:27415/exchange-data"
-	DB_NAME    = "exchange-data"
-	COLL_NAME  = "rates"
+	// db in mongo
+	DB_NAME = "exchange-data"
+	// collection name
+	COLL_NAME = "rates"
 )
 
 var (
 	numberOfJobs    = flag.Int("n", 10, "number of jobs to generate")
 	numberOfWorkers = flag.Int("wn", 10, "number of workers in pool")
+
+	// TODO make configurable
+	limitOnFail       = 3
+	limitOnSuccess    = 10
+	delayOnGetRateErr = 3 * time.Second
+	delayOnSuccess    = 60 * time.Second
 )
 
 func init() {
+	// parse cmd line flags
 	flag.Parse()
 	flag.Usage()
 }
@@ -56,32 +66,32 @@ func main() {
 	if err != nil {
 		log.Fatal("mongo ", err)
 	}
+
 	// queue of computed exchange rates data
 	out := make(chan ExchangeData, 1000)
+
+	// connect to beanstalk
 	queue, err := beanstalk.Dial("tcp", BEAN_ADDR)
 	if err != nil {
 		log.Fatal("err during beanstalk ", err)
 	}
+
 	// start pool of workers
+	// for parallel job processing
 	for i := 0; i < *numberOfWorkers; i++ {
-		go worker(queue, TUBE_NAME, mongo, out)
+		go worker(queue, TUBE_NAME, mongo, source.XE_COM, out)
 	}
-	// pull exchange data from chan and store in mongo
+
+	// pull exchange data from chan to process further if needed
 	for v := range out {
-		fmt.Printf("exchange data %+v\n", v)
+		log.Printf("exchange data %+v\n", v)
 
 	}
 
 }
 
-var (
-	limitOnFail       = 3
-	limitOnSuccess    = 10
-	delayOnGetRateErr = 3 * time.Second
-	delayOnSuccess    = 60 * time.Second
-)
-
-func worker(queue *beanstalk.Conn, tubeName string, db *datastore.DB, out chan ExchangeData) {
+// job consumer get job from queue, get exchange rate from defined source and output result
+func worker(queue *beanstalk.Conn, tubeName string, db *datastore.DB, src parser.ExchangeSource, out chan ExchangeData) {
 
 	jobTube := NewJobTube(queue, tubeName)
 	// start inf loop to process jobs
@@ -94,7 +104,7 @@ func worker(queue *beanstalk.Conn, tubeName string, db *datastore.DB, out chan E
 			continue
 		}
 
-		rate, err := parser.GetRate(source.XE_COM, job.From, job.To)
+		rate, err := parser.GetRate(src, job.From, job.To)
 		if err != nil {
 			log.Println("job id ", id, " GetRate err ", err)
 			// and increment fail counter
