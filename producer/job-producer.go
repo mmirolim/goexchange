@@ -27,7 +27,9 @@ const (
 )
 
 var (
-	numberOfJobs = flag.Int("n", 10, "number of jobs to generate")
+	numberOfJobs = flag.Int("n", 1, "number of jobs to generate")
+	fromRate     = flag.String("f", "", "from currency")
+	toRate       = flag.String("t", "USD", "to currency")
 	// currency rates
 	curs = []Currency{
 		{"USD", "US Dollar"},
@@ -61,6 +63,7 @@ func init() {
 }
 
 func main() {
+	var job Job
 	conn, err := beanstalk.Dial("tcp", BEAN_ADDR)
 	if err != nil {
 		log.Fatal("err during beanstalk ", err)
@@ -68,10 +71,19 @@ func main() {
 	tube := &beanstalk.Tube{conn, TUBE_NAME}
 	uniProb := rng.NewUniformGenerator(time.Now().UnixNano())
 	for i := 0; i < *numberOfJobs; i++ {
-		job := Job{
-			From: curs[uniProb.Int64n(int64(len(curs)))].Abbr,
-			To:   curs[uniProb.Int64n(int64(len(curs)))].Abbr,
+		if *fromRate != "" {
+			job = Job{
+				From: *fromRate,
+				To:   *toRate,
+			}
+		} else {
+
+			job = Job{
+				From: curs[uniProb.Int64n(int64(len(curs)))].Abbr,
+				To:   curs[uniProb.Int64n(int64(len(curs)))].Abbr,
+			}
 		}
+		fmt.Printf("job produced %+v\n", job)
 		data, err := json.Marshal(job)
 		if err != nil {
 			log.Println("json marshal err ", err)

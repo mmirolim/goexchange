@@ -42,7 +42,7 @@ func GetRate(src ExchangeSource, from, to string) (float64, error) {
 	if len(nodes) < src.Selector().Pos {
 		return rate, errors.New("html page parse err node position wrong")
 	}
-	//
+	//TODO does not correctly handle financial number format like 2,923.12
 	rate, err = src.FormatRate(getText(nodes[src.Selector().Pos]))
 	if err != nil {
 		return rate, errors.New(err.Error() + "From: " + from + " To: " + to)
