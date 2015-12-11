@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -13,22 +12,6 @@ import (
 	"github.com/mmirolim/HsNlaEWBgkaYrFKu2BQHSQ/parser"
 	"github.com/mmirolim/HsNlaEWBgkaYrFKu2BQHSQ/source"
 )
-
-// Job in beanstalkd
-type Job struct {
-	From           string
-	To             string
-	FailCounter    int `bson:"-"` // ignore in mongo
-	SuccessCounter int `bson:"-"` // ignore in mongo
-}
-
-// ExchangeData is result for a job
-// TODO add source to job (where to get data)
-type ExchangeData struct {
-	Job
-	Rate      string // rate in string format with 2 decimal numbers
-	CreatedAt int64  `bson:"created_at" json:"created_at"` // timestamp
-}
 
 const (
 	// beanstalk server addr
@@ -68,7 +51,7 @@ func main() {
 	}
 
 	// queue of computed exchange rates data
-	out := make(chan ExchangeData, 1000)
+	out := make(chan datastore.ExchangeData, 1000)
 
 	// connect to beanstalk
 	queue, err := beanstalk.Dial("tcp", BEAN_ADDR)
@@ -161,49 +144,4 @@ func worker(queue *beanstalk.Conn, tubeName string, db *datastore.DB, src parser
 
 	}
 
-}
-
-type Tube struct {
-	q              *beanstalk.Conn
-	t              *beanstalk.Tube
-	ts             *beanstalk.TubeSet
-	delayOnSuccess time.Duration
-	delayOnErr     time.Duration
-}
-
-func NewJobTube(conn *beanstalk.Conn, tube string) *Tube {
-	return &Tube{
-		q:  conn,
-		t:  &beanstalk.Tube{conn, tube},
-		ts: beanstalk.NewTubeSet(conn, tube),
-	}
-}
-
-func (tb *Tube) Reserve(timeout time.Duration) (uint64, Job, error) {
-	var job Job
-	id, data, err := tb.ts.Reserve(timeout)
-	if err != nil {
-		return 0, job, err
-	}
-	err = json.Unmarshal(data, &job)
-	if err != nil {
-		return 0, job, err
-	}
-
-	return id, job, nil
-}
-
-func (tb *Tube) PutBack(id uint64, job Job, delay time.Duration) (uint64, error) {
-	data, err := json.Marshal(job)
-	if err != nil {
-		return 0, err
-	}
-
-	// swap jobs by deleting previous and putting new one
-	err = tb.q.Delete(id)
-	if err != nil {
-		return 0, err
-	}
-
-	return tb.t.Put(data, 1, delay, time.Minute)
 }
