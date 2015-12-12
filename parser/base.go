@@ -8,6 +8,10 @@ import (
 	"golang.org/x/net/html/atom"
 )
 
+var (
+	get = http.Get
+)
+
 // ExchangeSource defines source to use in parser
 type ExchangeSource interface {
 	ExchangePageUrl(from, to string) string
@@ -29,7 +33,7 @@ type NodeSelector struct {
 func GetRate(src ExchangeSource, from, to string) (float64, error) {
 	var rate float64
 	// get html page
-	r, err := http.Get(src.ExchangePageUrl(from, to))
+	r, err := get(src.ExchangePageUrl(from, to))
 	if err != nil {
 		return rate, err
 	}
