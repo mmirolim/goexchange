@@ -14,5 +14,5 @@ errlimit = 3
 faillimit = 3
 successlimit = 10
 delayonerr = 3
-delayonsuccess = 10
+delayonsuccess = 60
 	

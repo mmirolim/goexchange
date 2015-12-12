@@ -26,8 +26,22 @@ func (j *Job) Succeed() {
 	j.Successful = true
 }
 
+// define interface for queue tube
+type tubeSet interface {
+	Reserve(time.Duration) (uint64, []byte, error)
+}
+
+type tube interface {
+	Put([]byte, uint32, time.Duration, time.Duration) (uint64, error)
+}
+
+type conn interface {
+	Delete(uint64) error
+	Bury(uint64, uint32) error
+}
+
 // Tube decorator to simplify our use case
-type Tube struct {
+/*type Tube struct {
 	jobErrLimit     int
 	jobSuccessLimit int
 	delayOnErr      time.Duration
@@ -35,6 +49,17 @@ type Tube struct {
 	q               *beanstalk.Conn
 	t               *beanstalk.Tube
 	ts              *beanstalk.TubeSet
+}
+*/
+// Tube decorator to simplify our use case
+type Tube struct {
+	jobErrLimit     int
+	jobSuccessLimit int
+	delayOnErr      time.Duration
+	delayOnSuccess  time.Duration
+	q               conn
+	t               tube
+	ts              tubeSet
 }
 
 func Connect(protocol, addr, tube string, jobErrLimit, jobSuccessLimit int, delayOnErr, delayOnSuccess time.Duration) (*Tube, error) {
