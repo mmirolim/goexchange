@@ -11,8 +11,19 @@ import (
 type Job struct {
 	From           string
 	To             string
+	Successful     bool
 	FailCounter    int `bson:"-"` // ignore in mongo
 	SuccessCounter int `bson:"-"` // ignore in mongo
+}
+
+func (j *Job) Failed() {
+	j.FailCounter++
+	j.Successful = false
+}
+
+func (j *Job) Succeed() {
+	j.SuccessCounter++
+	j.Successful = true
 }
 
 // Tube decorator to simplify our use case
