@@ -20,31 +20,35 @@
 5. If failed more than 3 times in total (not consecutive), job buried.
 
 ### How to use
-1. Get Go compiler https://golang.org/dl/
-2. Install it https://golang.org/doc/install, set GOPATH env
-3. Get it
+* Get Go compiler https://golang.org/dl/
+* Install it https://golang.org/doc/install, set GOPATH env
+* Get it
 ```
 go get github.com/mmirolim/HsNlaEWBgkaYrFKu2BQHSQ
 ```
-4. go to repository
+* go to repository
 ```
 cd $GOPATH/src/github.com/mmirolim/HsNlaEWBgkaYrFKu2BQHSQ
 ```
-5. run tests
+
+* run tests
 ```
 go test -v ./...
 ```
-6. build executable with
+
+* build executable with
 ```
 go get ./...
 go build -o app
 ```
-7. change configuration if required
-8. run it
+
+* change configuration in conf.toml if required
+* run it
 ```
 ./app
 ```
-8. There is producer  in producer dir, by default generates random 10 exchange jobs
+
+* There is producer  in producer dir, by default generates random 10 exchange jobs
 ```
 cd producer
 go run job-producer.go -n 1 -f USD -t HKD
