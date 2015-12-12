@@ -2,14 +2,13 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"log"
 	"strconv"
 	"time"
 
-	"github.com/kr/beanstalk"
 	"github.com/mmirolim/HsNlaEWBgkaYrFKu2BQHSQ/datastore"
 	"github.com/mmirolim/HsNlaEWBgkaYrFKu2BQHSQ/parser"
+	"github.com/mmirolim/HsNlaEWBgkaYrFKu2BQHSQ/queue"
 	"github.com/mmirolim/HsNlaEWBgkaYrFKu2BQHSQ/source"
 )
 
@@ -54,7 +53,7 @@ func main() {
 	out := make(chan datastore.ExchangeData, 1000)
 
 	// connect to beanstalk
-	queue, err := beanstalk.Dial("tcp", BEAN_ADDR)
+	tube, err := queue.Connect("tcp", BEAN_ADDR, TUBE_NAME)
 	if err != nil {
 		log.Fatal("err during beanstalk ", err)
 	}
@@ -62,27 +61,31 @@ func main() {
 	// start pool of workers
 	// for parallel job processing
 	for i := 0; i < *numberOfWorkers; i++ {
-		go worker(queue, TUBE_NAME, mongo, source.XE_COM, out)
+		go worker(tube, source.XE_COM, out)
 	}
 
 	// pull exchange data from chan to process further if needed
 	for v := range out {
-		log.Printf("exchange data %+v\n", v)
+		log.Printf("got exchange data %+v\n", v)
+		// save to mongo
+		err = mongo.Save(v, COLL_NAME)
+		if err != nil {
+			// log error but continue working
+			log.Println("mongo insert failed ", err)
+		}
+		log.Println("saved to mongo")
 
 	}
 
 }
 
 // job consumer get job from queue, get exchange rate from defined source and output result
-func worker(queue *beanstalk.Conn, tubeName string, db *datastore.DB, src parser.ExchangeSource, out chan ExchangeData) {
+func worker(tube *queue.Tube, src parser.ExchangeSource, out chan datastore.ExchangeData) {
 
-	jobTube := NewJobTube(queue, tubeName)
-	// start inf loop to process jobs
 	for {
 		// get and reserve job
-		id, job, err := jobTube.Reserve(10 * time.Millisecond)
+		id, job, err := tube.Reserve(10 * time.Millisecond)
 		if err != nil {
-			// TODO handle error
 			// get another job
 			continue
 		}
@@ -90,53 +93,47 @@ func worker(queue *beanstalk.Conn, tubeName string, db *datastore.DB, src parser
 		rate, err := parser.GetRate(src, job.From, job.To)
 		if err != nil {
 			log.Println("job id ", id, " GetRate err ", err)
+
 			// and increment fail counter
 			job.FailCounter++
-			fmt.Println("fail counter incr", job)
 			if job.FailCounter == limitOnFail {
 				// bury job
-				queue.Bury(id, 1)
-				fmt.Println("bury job after 3 fails")
-				// and go to beginning of the loop for new job
+				if err := tube.Bury(id); err != nil {
+					log.Println("bury failed", err)
+					continue
+				}
+
+				log.Println("job is buried ", job)
 				continue
 			}
 			// put back job with a delay
-			id, err = jobTube.PutBack(id, job, delayOnGetRateErr)
+			id, err = tube.PutBack(id, job, delayOnGetRateErr)
 			if err != nil {
-				log.Println("job id ", id, "failed put it back with delay ", delayOnGetRateErr)
+				log.Println("put back job failed ", job)
 			}
 
+			// go get another job
 			continue
 		}
 
 		// on sucess incr success counter
 		job.SuccessCounter++
-		log.Println("succes counter incr", job)
-		// save to mongo
-		err = db.Save(job, COLL_NAME)
-		if err != nil {
-			// log error but continue working
-			log.Println("mongo insert err ", err)
-		}
 		// condition on success counter
 		if job.SuccessCounter == limitOnSuccess {
 			// delete currency conversion job
-			err = queue.Delete(id)
-			fmt.Println("delete job after 10 success")
+			err = tube.Delete(id)
 			if err != nil {
 				log.Println("on delete ", err)
 			}
-			continue
+		} else {
+			// put job back with incr counter
+			id, err = tube.PutBack(id, job, delayOnSuccess)
+			if err != nil {
+				log.Println("put back failed ", err)
+			}
 		}
-		// put job back with incr counter
-		id, err = jobTube.PutBack(id, job, delayOnSuccess)
-		if err != nil {
-			log.Println("put back err ", err)
-			continue
-		}
-		fmt.Println("put job back with success delay", job)
 		// send result to chan
-		out <- ExchangeData{
+		out <- datastore.ExchangeData{
 			Job:       job,
 			Rate:      strconv.FormatFloat(rate, 'f', 2, 64),
 			CreatedAt: time.Now().UTC().Unix(),

@@ -62,3 +62,16 @@ func (tb *Tube) PutBack(id uint64, job Job, delay time.Duration) (uint64, error)
 
 	return tb.t.Put(data, 1, delay, time.Minute)
 }
+
+// Bury job with default priority 1 if not defined
+func (tb *Tube) Bury(id uint64, pr ...uint32) error {
+	if len(pr) == 1 {
+		return tb.q.Bury(id, pr[0])
+	}
+	return tb.q.Bury(id, 1)
+}
+
+// Delete job from tube
+func (tb *Tube) Delete(id uint64) error {
+	return tb.q.Delete(id)
+}
