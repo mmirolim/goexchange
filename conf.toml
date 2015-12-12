@@ -1,0 +1,18 @@
+[queue]
+protocol = "tcp"
+host = "challenge.aftership.net:11300"
+tube = "mmirolim"
+
+[mongo]
+dsn =  "mongodb://admin:admin@ds027415.mongolab.com:27415/exchange-data"
+db = "exchange-data"
+collname = "rates"
+timeout = 2
+errlimit = 3
+
+[job]
+faillimit = 3
+successlimit = 10
+delayonerr = 3
+delayonsuccess = 10
+	

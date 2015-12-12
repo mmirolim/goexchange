@@ -28,20 +28,28 @@ func (j *Job) Succeed() {
 
 // Tube decorator to simplify our use case
 type Tube struct {
-	q  *beanstalk.Conn
-	t  *beanstalk.Tube
-	ts *beanstalk.TubeSet
+	jobErrLimit     int
+	jobSuccessLimit int
+	delayOnErr      time.Duration
+	delayOnSuccess  time.Duration
+	q               *beanstalk.Conn
+	t               *beanstalk.Tube
+	ts              *beanstalk.TubeSet
 }
 
-func Connect(protocol, addr, tube string) (*Tube, error) {
+func Connect(protocol, addr, tube string, jobErrLimit, jobSuccessLimit int, delayOnErr, delayOnSuccess time.Duration) (*Tube, error) {
 	conn, err := beanstalk.Dial(protocol, addr)
 	if err != nil {
 		return nil, err
 	}
 	return &Tube{
-		q:  conn,
-		t:  &beanstalk.Tube{conn, tube},
-		ts: beanstalk.NewTubeSet(conn, tube),
+		jobErrLimit:     jobErrLimit,
+		jobSuccessLimit: jobSuccessLimit,
+		delayOnErr:      delayOnErr,
+		delayOnSuccess:  delayOnSuccess,
+		q:               conn,
+		t:               &beanstalk.Tube{conn, tube},
+		ts:              beanstalk.NewTubeSet(conn, tube),
 	}, nil
 }
 
@@ -59,7 +67,18 @@ func (tb *Tube) Reserve(timeout time.Duration) (uint64, Job, error) {
 	return id, job, nil
 }
 
-func (tb *Tube) PutBack(id uint64, job Job, delay time.Duration) (uint64, error) {
+// PutBack job with delay depending on success or failure of job
+// if err/success reached limits then bury/delete job
+func (tb *Tube) PutBack(id uint64, job Job) (uint64, error) {
+	if job.FailCounter == tb.jobErrLimit {
+		// bury job
+		return id, tb.Bury(id)
+	}
+	if job.SuccessCounter == tb.jobSuccessLimit {
+		// delete job
+		return id, tb.Delete(id)
+	}
+
 	data, err := json.Marshal(job)
 	if err != nil {
 		return 0, err
@@ -69,6 +88,12 @@ func (tb *Tube) PutBack(id uint64, job Job, delay time.Duration) (uint64, error)
 	err = tb.q.Delete(id)
 	if err != nil {
 		return 0, err
+	}
+	var delay time.Duration
+	if job.Successful {
+		delay = tb.delayOnSuccess
+	} else {
+		delay = tb.delayOnErr
 	}
 
 	return tb.t.Put(data, 1, delay, time.Minute)

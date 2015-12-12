@@ -4,9 +4,11 @@ import (
 	"errors"
 	"flag"
 	"log"
+	"os"
 	"strconv"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/mgutz/ansi"
 	"github.com/mmirolim/HsNlaEWBgkaYrFKu2BQHSQ/datastore"
 	"github.com/mmirolim/HsNlaEWBgkaYrFKu2BQHSQ/parser"
@@ -14,31 +16,35 @@ import (
 	"github.com/mmirolim/HsNlaEWBgkaYrFKu2BQHSQ/source"
 )
 
-const (
-	// beanstalk server addr
-	BEAN_ADDR = "challenge.aftership.net:11300"
-	// tube name in beanstalk
-	TUBE_NAME = "mmirolim"
-	// dsn
-	MONGO_HOST = "mongodb://admin:admin@ds027415.mongolab.com:27415/exchange-data"
-	// db in mongo
-	DB_NAME = "exchange-data"
-	// collection name
-	COLL_NAME = "rates"
-)
-
 var (
+	file            = flag.String("conf", "conf.toml", "config file in toml format")
 	numberOfWorkers = flag.Int("wn", 10, "number of workers to process jobs")
-	mongoErrLimit   = 3
-	// TODO make configurable
-	limitOnFail    = 3
-	limitOnSuccess = 10
-	delayOnErr     = 3 * time.Second
-	delayOnSuccess = 6 * time.Second
-
-	colorRed   = ansi.ColorFunc("red")
-	colorGreen = ansi.ColorFunc("green")
+	colorRed        = ansi.ColorFunc("red")
+	colorGreen      = ansi.ColorFunc("green")
 )
+
+type AppConf struct {
+	Queue struct {
+		Protocol string
+		Host     string
+		Tube     string
+	}
+
+	Mongo struct {
+		DSN      string
+		DB       string
+		CollName string
+		Timeout  int
+		ErrLimit int
+	}
+
+	Job struct {
+		FailLimit      int
+		SuccessLimit   int
+		DelayOnErr     int
+		DelayOnSuccess int
+	}
+}
 
 func init() {
 	// parse cmd line flags
@@ -47,8 +53,23 @@ func init() {
 }
 
 func main() {
+	var appCfg AppConf
+	f, err := os.Open(*file)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	_, err = toml.DecodeReader(f, &appCfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// connect to mongo
-	mongo, err := datastore.Connect(MONGO_HOST, DB_NAME, 2*time.Second)
+	mongo, err := datastore.Connect(
+		appCfg.Mongo.DSN,
+		appCfg.Mongo.DB,
+		time.Duration(appCfg.Mongo.Timeout)*time.Second,
+	)
 	if err != nil {
 		log.Fatal("mongo ", err)
 	}
@@ -57,9 +78,18 @@ func main() {
 	out := make(chan datastore.ExchangeData, 1000)
 
 	// connect to beanstalk
-	tube, err := queue.Connect("tcp", BEAN_ADDR, TUBE_NAME)
+	tube, err := queue.Connect(
+		appCfg.Queue.Protocol,
+		appCfg.Queue.Host,
+		appCfg.Queue.Tube,
+		appCfg.Job.FailLimit,
+		appCfg.Job.SuccessLimit,
+		time.Duration(appCfg.Job.DelayOnErr)*time.Second,
+		time.Duration(appCfg.Job.DelayOnSuccess)*time.Second,
+	)
+
 	if err != nil {
-		log.Fatal("err during beanstalk ", err)
+		log.Fatal(err)
 	}
 
 	// start pool of workers
@@ -72,11 +102,11 @@ func main() {
 loop:
 	for v := range out {
 		// save to mongo
-		err = mongo.Save(v, COLL_NAME)
+		err = mongo.Save(v, appCfg.Mongo.CollName)
 		if err != nil {
 			log.Println(colorRed("[ERR] on mongo insert "), err)
 			// handle connection error
-			if e := handleMongoErr(mongo, mongoErrLimit); e != nil {
+			if e := handleMongoErr(mongo, appCfg.Mongo.ErrLimit); e != nil {
 				log.Println(colorRed(e.Error()))
 				break loop
 			}
@@ -94,81 +124,40 @@ loop:
 // job consumer get job from queue, get exchange rate from defined source and output result
 func worker(tube *queue.Tube, src parser.ExchangeSource, out chan datastore.ExchangeData) {
 	var (
-		id    uint64
-		job   queue.Job
-		rate  float64
-		delay time.Duration
-		err   error
+		id   uint64
+		job  queue.Job
+		rate float64
+		err  error
 	)
 
-getJob:
-	// get and reserve job
-	id, job, err = tube.Reserve(10 * time.Millisecond)
-	if err != nil {
-		// get another job
-		goto getJob
-	}
-
-	rate, err = parser.GetRate(src, job.From, job.To)
-	if err != nil {
-		log.Println(colorRed("[ERR] on GetRate "), err, job)
-		goto onErr
-	}
-	goto onSuccess
-
-onErr:
-	job.Failed()
-	if job.FailCounter == limitOnFail {
-		// bury job
-		if err := tube.Bury(id); err != nil {
-			log.Println(colorRed("[ERR] on bury "), err)
-		} else {
-			log.Println(colorGreen("[SUCC] job is buried "), job)
-		}
-		goto getJob
-
-	}
-
-	goto putBack
-
-onSuccess:
-	job.Succeed()
-	// send result to chan
-	out <- datastore.ExchangeData{
-		Job:       job,
-		Rate:      strconv.FormatFloat(rate, 'f', 2, 64),
-		CreatedAt: time.Now().UTC().Unix(),
-	}
-
-	// condition on success counter
-	if job.SuccessCounter == limitOnSuccess {
-		// delete currency conversion job
-		err = tube.Delete(id)
+	for {
+		// get and reserve job
+		id, job, err = tube.Reserve(10 * time.Millisecond)
 		if err != nil {
-			log.Println(colorRed("[ERR] on delete "), err)
-		} else {
-			log.Println(colorGreen("[SUCC] job is deleted "), job)
+			// get another job
+			continue
 		}
-		goto getJob
-	}
-	goto putBack
 
-putBack:
-	if job.Successful {
-		delay = delayOnSuccess
-	} else {
-		delay = delayOnErr
+		rate, err = parser.GetRate(src, job.From, job.To)
+		if err != nil {
+			log.Println(colorRed("[ERR] on GetRate "), err, job)
+			job.Failed()
+		} else {
+			job.Succeed()
+			// send result to chan
+			out <- datastore.ExchangeData{
+				Job:       job,
+				Rate:      strconv.FormatFloat(rate, 'f', 2, 64),
+				CreatedAt: time.Now().UTC().Unix(),
+			}
+		}
+		// put job pack
+		id, err = tube.PutBack(id, job)
+		if err != nil {
+			log.Println(colorRed("[ERR] on put job back"), job)
+		}
+		log.Println(colorGreen("[SUCC] put job back "), job)
 	}
-
-	// put back job with a delay
-	id, err = tube.PutBack(id, job, delay)
-	if err != nil {
-		log.Println(colorRed("[ERR] on put job back"), job)
-	} else {
-		log.Println(colorGreen("[SUCC] put job back "), job, " with delay ", delay)
-	}
-
-	goto getJob
 
 }
 
