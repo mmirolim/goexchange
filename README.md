@@ -30,16 +30,21 @@ go get github.com/mmirolim/HsNlaEWBgkaYrFKu2BQHSQ
 ```
 cd $GOPATH/src/github.com/mmirolim/HsNlaEWBgkaYrFKu2BQHSQ
 ```
-5. build executable with
+5. run tests
+```
+go test -v ./...
+```
+6. build executable with
 ```
 go get ./...
 go build -o app
 ```
-6. run it
+7. change configuration if required
+8. run it
 ```
 ./app
 ```
-7. There is producer  in producer dir
+8. There is producer  in producer dir, by default generates random 10 exchange jobs
 ```
 cd producer
 go run job-producer.go -n 1 -f USD -t HKD
@@ -47,7 +52,4 @@ go run job-producer.go -n 1 -f USD -t HKD
 
 ### TODO
 1. Add Makefile
-2. Add tests
-3. Connection description for beanstalk and mongo in main.go. Make it configurable.
-
 
