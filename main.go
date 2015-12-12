@@ -1,11 +1,13 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"log"
 	"strconv"
 	"time"
 
+	"github.com/mgutz/ansi"
 	"github.com/mmirolim/HsNlaEWBgkaYrFKu2BQHSQ/datastore"
 	"github.com/mmirolim/HsNlaEWBgkaYrFKu2BQHSQ/parser"
 	"github.com/mmirolim/HsNlaEWBgkaYrFKu2BQHSQ/queue"
@@ -26,14 +28,16 @@ const (
 )
 
 var (
-	numberOfJobs    = flag.Int("n", 10, "number of jobs to generate")
-	numberOfWorkers = flag.Int("wn", 10, "number of workers in pool")
-
+	numberOfWorkers = flag.Int("wn", 10, "number of workers to process jobs")
+	mongoErrLimit   = 3
 	// TODO make configurable
 	limitOnFail    = 3
 	limitOnSuccess = 10
 	delayOnErr     = 3 * time.Second
 	delayOnSuccess = 6 * time.Second
+
+	colorRed   = ansi.ColorFunc("red")
+	colorGreen = ansi.ColorFunc("green")
 )
 
 func init() {
@@ -65,16 +69,25 @@ func main() {
 	}
 
 	// pull exchange data from chan to process further if needed
+loop:
 	for v := range out {
 		// save to mongo
 		err = mongo.Save(v, COLL_NAME)
 		if err != nil {
-			// log error but continue working
-			log.Println("mongo insert failed ", err)
+			log.Println(colorRed("[ERR] on mongo insert "), err)
+			// handle connection error
+			if e := handleMongoErr(mongo, mongoErrLimit); e != nil {
+				log.Println(colorRed(e.Error()))
+				break loop
+			}
+			continue
 		}
-		log.Printf("job saved to mongo %+v\n", v)
+
+		log.Printf(colorGreen("[SUCC] job saved to mongo %+v\n"), v)
 
 	}
+
+	log.Println(colorRed("Exiting Bye"))
 
 }
 
@@ -98,7 +111,7 @@ getJob:
 
 	rate, err = parser.GetRate(src, job.From, job.To)
 	if err != nil {
-		log.Println("job id ", id, " GetRate err ", err)
+		log.Println(colorRed("[ERR] on GetRate "), err, job)
 		goto onErr
 	}
 	goto onSuccess
@@ -108,9 +121,10 @@ onErr:
 	if job.FailCounter == limitOnFail {
 		// bury job
 		if err := tube.Bury(id); err != nil {
-			log.Println("bury failed", err)
+			log.Println(colorRed("[ERR] on bury "), err)
+		} else {
+			log.Println(colorGreen("[SUCC] job is buried "), job)
 		}
-		log.Println("job is buried ", job)
 		goto getJob
 
 	}
@@ -131,9 +145,10 @@ onSuccess:
 		// delete currency conversion job
 		err = tube.Delete(id)
 		if err != nil {
-			log.Println("on delete ", err)
+			log.Println(colorRed("[ERR] on delete "), err)
+		} else {
+			log.Println(colorGreen("[SUCC] job is deleted "), job)
 		}
-		log.Println("job is deleted ", job)
 		goto getJob
 	}
 	goto putBack
@@ -144,12 +159,38 @@ putBack:
 	} else {
 		delay = delayOnErr
 	}
-	log.Println("put job back ", job, " with delay ", delay)
+
 	// put back job with a delay
 	id, err = tube.PutBack(id, job, delay)
 	if err != nil {
-		log.Println("put job back failed", job)
+		log.Println(colorRed("[ERR] on put job back"), job)
+	} else {
+		log.Println(colorGreen("[SUCC] put job back "), job, " with delay ", delay)
 	}
+
 	goto getJob
 
+}
+
+// handle mongo err, try ping it number of times and wait
+func handleMongoErr(db *datastore.DB, limitTries int) error {
+	// back off and check connection
+	for i := 0; i <= limitTries; i++ {
+		// exit outer loop and exit application
+		if i == limitTries {
+			return errors.New("[ERR] too many mongo connection errors")
+		}
+		log.Println("back off and wait and Ping mongo after", i, "s")
+		time.Sleep(time.Duration(i) * time.Second)
+		if err := db.Ping(); err != nil {
+			// on err wait and ping again
+			continue
+		} else {
+			// on success continue job
+			break
+		}
+
+	}
+
+	return nil
 }

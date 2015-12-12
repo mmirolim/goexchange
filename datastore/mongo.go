@@ -29,4 +29,7 @@ func (d *DB) Save(doc interface{}, collName string) error {
 	return d.m.DB(d.db).C(collName).Insert(doc)
 }
 
-// TODO add history exchage rates
+// Ping to check is server/connection healthy
+func (d *DB) Ping() error {
+	return d.m.Ping()
+}
