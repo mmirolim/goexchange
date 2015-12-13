@@ -41,17 +41,6 @@ type conn interface {
 }
 
 // Tube decorator to simplify our use case
-/*type Tube struct {
-	jobErrLimit     int
-	jobSuccessLimit int
-	delayOnErr      time.Duration
-	delayOnSuccess  time.Duration
-	q               *beanstalk.Conn
-	t               *beanstalk.Tube
-	ts              *beanstalk.TubeSet
-}
-*/
-// Tube decorator to simplify our use case
 type Tube struct {
 	jobErrLimit     int
 	jobSuccessLimit int
@@ -77,7 +66,7 @@ func Connect(protocol, addr, tube string, jobErrLimit, jobSuccessLimit int, dela
 		ts:              beanstalk.NewTubeSet(conn, tube),
 	}, nil
 }
-
+// Reserve get job from tube and unmarshal it to Job struct and reserve it
 func (tb *Tube) Reserve(timeout time.Duration) (uint64, Job, error) {
 	var job Job
 	id, data, err := tb.ts.Reserve(timeout)
