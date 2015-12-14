@@ -30,15 +30,16 @@ go get github.com/mmirolim/HsNlaEWBgkaYrFKu2BQHSQ
 ```
 cd $GOPATH/src/github.com/mmirolim/HsNlaEWBgkaYrFKu2BQHSQ
 ```
-
+* get third party libraries
+```
+go get ./...
+```
 * run tests
 ```
 go test -v ./...
 ```
-
 * build executable with
 ```
-go get ./...
 go build -o app
 ```
 
