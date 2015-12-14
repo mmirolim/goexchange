@@ -5,10 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math/rand"
 	"time"
 
 	"github.com/kr/beanstalk"
-	"github.com/leesper/go_rng"
 )
 
 type Currency struct {
@@ -69,7 +69,7 @@ func main() {
 		log.Fatal("err during beanstalk ", err)
 	}
 	tube := &beanstalk.Tube{conn, TUBE_NAME}
-	uniProb := rng.NewUniformGenerator(time.Now().UnixNano())
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	for i := 0; i < *numberOfJobs; i++ {
 		if *fromRate != "" {
 			job = Job{
@@ -79,8 +79,8 @@ func main() {
 		} else {
 
 			job = Job{
-				From: curs[uniProb.Int64n(int64(len(curs)))].Abbr,
-				To:   curs[uniProb.Int64n(int64(len(curs)))].Abbr,
+				From: curs[r.Intn(len(curs))].Abbr,
+				To:   curs[r.Intn(len(curs))].Abbr,
 			}
 		}
 		fmt.Printf("job produced %+v\n", job)
